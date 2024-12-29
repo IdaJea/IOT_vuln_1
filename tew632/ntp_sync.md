@@ -15,7 +15,7 @@ through a POST request.
 
 ## Reproduction Steps
 
-1. Log in to the DrayTek Vigor router.
+1. Log in to the router.
 
 ```python
 import requests
