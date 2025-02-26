@@ -52,7 +52,8 @@ print("Response Content:", response.text)
 
 The get_cgi function accepts external data. The user affects v5 by setting the WL_atten_ctl value. It enters system execution, resulting in a command execution vulnerability.
 
-![image-20250226211642419](C:\Users\XiaoA\AppData\Roaming\Typora\typora-user-images\image-20250226211642419.png)
+![image-20250226211642419](https://github.com/user-attachments/assets/c0b72818-f526-4328-935c-9cd6f3135f37)
+
 
 ## Suggested Fix
 
