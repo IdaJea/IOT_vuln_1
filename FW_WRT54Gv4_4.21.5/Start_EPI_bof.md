@@ -49,7 +49,8 @@ print("Response Content:", response.text)
 
 The get_cgi function accepts external data. The user affects v5 by setting the wl_ant value. It enters system execution, resulting in a command execution vulnerability.
 
-![image-20250301101039879](C:\Users\XiaoA\AppData\Roaming\Typora\typora-user-images\image-20250301101039879.png)
+![image](https://github.com/user-attachments/assets/7c2104e8-2d4e-4ac8-aec1-c977f3b14bb7)
+
 
 ## Suggested Fix
 
