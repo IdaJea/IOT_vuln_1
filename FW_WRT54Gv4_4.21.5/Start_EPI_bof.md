@@ -47,7 +47,11 @@ print("Response Content:", response.text)
 
 ## Cause Analysis
 
-The get_cgi function accepts external data. The user affects v5 by setting the wl_ant value.  After sprintf splicing, it enters v7 cause crash.![image-20250301101039879](C:\Users\XiaoA\AppData\Roaming\Typora\typora-user-images\image-20250301101039879.png)
+The get_cgi function accepts external data. The user affects v5 by setting the wl_ant value. It enters system execution, resulting in a command execution vulnerability.
+
+![image](https://github.com/user-attachments/assets/7c2104e8-2d4e-4ac8-aec1-c977f3b14bb7)
+
+>>>>>>> b0a0d393fe03133a62a97218ca5ca6818eb457cc
 
 ## Suggested Fix
 
