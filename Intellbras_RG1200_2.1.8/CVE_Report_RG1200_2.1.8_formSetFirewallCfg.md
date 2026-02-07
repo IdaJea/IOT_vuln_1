@@ -8,7 +8,7 @@ Authentication Bypass and Stack Buffer Overflow Vulnerability in Intelbras RG120
 
 Intelbras RG1200 firmware 2.1.8 contains an authentication bypass in the request dispatch chain (`R7WebsSecurityHandler` + `websFormHandler`) caused by inconsistent use of the raw (non-decoded) URL versus the decoded path. Whitelist checks are performed against the raw URL, while the form dispatcher resolves the decoded/truncated path, enabling crafted requests to bypass authentication and reach protected handlers.
 
-After authentication bypass (or with a valid authenticated session), an attacker can trigger a stack buffer overflow in `formSetFirewallCfg`. The handler copies the user-controlled `firewallEn` parameter into a small fixed-size stack buffer using `strcpy` without enforcing an upper bound.
+After authentication bypass, an attacker can trigger a stack buffer overflow in `formSetFirewallCfg`. The handler copies the user-controlled `firewallEn` parameter into a small fixed-size stack buffer using `strcpy` without enforcing an upper bound.
 
 ## POC
 
