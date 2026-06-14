@@ -47,6 +47,69 @@ if __name__ == "__main__":
 
 ## Cause Analysis
 
-1. **authentication** : The HTTP request parsing logic stores the raw request URL into `wp->url` (not URL-decoded), while `wp->path` is derived from a decoded buffer produced by `websDecodeUrl` during `websUrlParse`. In `R7WebsSecurityHandler`, the whitelist is checked against the raw URL, while `websFormHandler` dispatches based on the decoded path, allowing crafted requests to bypass authentication and reach a protected `/goform` handler.
+### 1. Authentication Bypass — Raw URL vs Decoded Path Inconsistency
 
-2. **stack overflow**: `fromAddressNat` obtains `str = websGetVar(wp, "entrys", ...)` and `ifindex = websGetVar(wp, "mitInterface", ...)` and executes `sprintf(list, "%s;%s", str, ifindex)` into `list` (`char[512]`) without bounds checking. It also uses `sprintf(gotopage, "advance/addressNatList.asp?page=%s", page)` into `gotopage` (`char[256]`). Long inputs can overflow these stack buffers.
+The HTTP request parsing logic in `websParseFirst` (0x42ea1c) stores the raw request URL into `wp->url` (not URL-decoded), while `wp->path` is derived from a decoded buffer produced by `websDecodeUrl` → `websUrlParse`:
+
+```c
+// websParseFirst (0x42ea1c) — sets wp->url = raw, wp->path = decoded
+int __cdecl websParseFirst(webs_t wp, char_t *text)
+{
+    url = strtok(0, " \t\n");                         // raw URL from HTTP request line
+    if ( websUrlParse(url, &buf, &host, &path, &port, &query, &proto, 0, &ext) >= 0 )
+    {
+        wp->url = bstrdup(url);      // ← raw URL, NOT decoded
+        wp->path = bstrdup(path);    // ← decoded path from websDecodeUrl
+        // ...
+    }
+}
+```
+
+In `R7WebsSecurityHandler` (0x434c34), the whitelist check is performed using `strstr(url, ...)` on the **raw** `url` parameter (which is `wp->url`). By crafting a raw URL such as `/goform/fromAddressNat%00img/main-logo.png`, the security handler matches the whitelisted substring and returns 0 (allow) without enforcing authentication:
+
+```c
+// R7WebsSecurityHandler (0x434c34) — whitelist check on raw URL
+if ( !strncmp(url, "/public/", 8u)
+  || !strncmp(url, "/lang/", 6u)
+  || strstr(url, "img/main-logo.png")    // ← BYPASS: matches %00img/main-logo.png in raw URL
+  || strstr(url, "reasy-ui-1.0.3.js")
+  // ...
+{
+    return 0;  // ← Authentication bypassed
+}
+```
+
+Meanwhile, `websDecodeUrl` (0x430ebc) decodes `%00` to a null byte, causing `websFormHandler` (0x415710) to receive the **decoded** path `/goform/fromAddressNat` and dispatch to the handler.
+
+### 2. Stack Buffer Overflow — Unbounded sprintf in fromAddressNat
+
+`fromAddressNat` (0x484aa0) obtains `str` and `ifindex` via `websGetVar`, then formats them into a 512-byte stack buffer via `sprintf` without bounds checking. A second `sprintf` for `page` also overflows a 256-byte buffer:
+
+```c
+// fromAddressNat (0x484aa0)
+void __cdecl fromAddressNat(webs_t wp, char_t *path, char_t *query)
+{
+    const char *ifindex;
+    const char *page;
+    const char *str;
+    char_t gotopage[256];     // ← 256-byte stack buffer
+    char_t list[512];         // ← 512-byte stack buffer
+    char param_str[260];
+
+    memset(gotopage, 0, sizeof(gotopage));
+    memset(list, 0, sizeof(list));
+    str = websGetVar(wp, "entrys", byte_4ED6B0);
+    ifindex = websGetVar(wp, "mitInterface", byte_4ED6B0);
+    sprintf(list, "%s;%s", str, ifindex);                          // ← OVERFLOW: two user inputs into 512-byte buffer
+    save_list_data("adv.addrnat", list, 126);
+    page = websGetVar(wp, "page", "1");
+    sprintf(gotopage, "advance/addressNatList.asp?page=%s", page); // ← OVERFLOW: page into 256-byte buffer
+    // ...
+    websRedirect(wp, gotopage);
+}
+```
+
+Two 1000-byte inputs for `entrys` and `mitInterface` produce a 2001+ byte string that overflows the 512-byte `list` buffer. Similarly, a long `page` value overflows the 256-byte `gotopage` buffer.
+
+
+

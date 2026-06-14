@@ -47,6 +47,68 @@ if __name__ == "__main__":
 
 ## Cause Analysis
 
-1. **authentication** : The HTTP request parsing logic stores the raw request URL into `wp->url` (not URL-decoded), while `wp->path` is derived from a decoded buffer produced by `websDecodeUrl` during `websUrlParse`. In `R7WebsSecurityHandler`, the whitelist is checked against the raw URL, while `websFormHandler` dispatches based on the decoded path, allowing crafted requests to bypass authentication and reach a protected `/goform` handler.
+### 1. Authentication Bypass — Raw URL vs Decoded Path Inconsistency
 
-2. **stack overflow**: `form_fast_setting_timezone` obtains `timestr = websGetVar(wp, "timeZone", ...)` and parses it via `sscanf(timestr + 1, "%[^:]:%s", timespand, timespand[1])` where `timespand` is `char timespand[2][4]` (unbounded specifiers). It then executes `strcpy(sys_timenextzone, timespand[1])` where `sys_timenextzone` is `char[4]`. Both operations can write beyond stack buffer bounds when `timeZone` is long.
+The HTTP request parsing logic in `websParseFirst` (0x42ea1c) stores the raw request URL into `wp->url` (not URL-decoded), while `wp->path` is derived from a decoded buffer produced by `websDecodeUrl` → `websUrlParse`:
+
+```c
+// websParseFirst (0x42ea1c) — sets wp->url = raw, wp->path = decoded
+int __cdecl websParseFirst(webs_t wp, char_t *text)
+{
+    url = strtok(0, " \t\n");                         // raw URL from HTTP request line
+    if ( websUrlParse(url, &buf, &host, &path, &port, &query, &proto, 0, &ext) >= 0 )
+    {
+        wp->url = bstrdup(url);      // ← raw URL, NOT decoded
+        wp->path = bstrdup(path);    // ← decoded path from websDecodeUrl
+        // ...
+    }
+}
+```
+
+In `R7WebsSecurityHandler` (0x434c34), the whitelist check is performed using `strstr(url, ...)` on the **raw** `url` parameter (which is `wp->url`). By crafting a raw URL such as `/goform/form_fast_setting_timezone%00img/main-logo.png`, the security handler matches the whitelisted substring and returns 0 (allow) without enforcing authentication:
+
+```c
+// R7WebsSecurityHandler (0x434c34) — whitelist check on raw URL
+if ( !strncmp(url, "/public/", 8u)
+  || !strncmp(url, "/lang/", 6u)
+  || strstr(url, "img/main-logo.png")    // ← BYPASS: matches %00img/main-logo.png in raw URL
+  || strstr(url, "reasy-ui-1.0.3.js")
+  // ...
+{
+    return 0;  // ← Authentication bypassed
+}
+```
+
+Meanwhile, `websDecodeUrl` (0x430ebc) decodes `%00` to a null byte, causing `websFormHandler` (0x415710) to receive the **decoded** path `/goform/form_fast_setting_timezone` and dispatch to the handler.
+
+### 2. Stack Buffer Overflow — Unbounded sscanf + strcpy in form_fast_setting_timezone
+
+`form_fast_setting_timezone` (0x4416f0) obtains `timestr = websGetVar(wp, "timeZone", ...)` and parses it via unbounded `sscanf` into tiny 4-byte stack buffers, then copies the result with `strcpy` into another 4-byte buffer:
+
+```c
+// form_fast_setting_timezone (0x4416f0)
+void __cdecl form_fast_setting_timezone(webs_t wp)
+{
+    char *timestr;
+    char sys_timezone[4];          // ← 4-byte stack buffer
+    char sys_timenextzone[4];      // ← 4-byte stack buffer
+    char timespand[2][4];          // ← 2 × 4-byte stack buffers
+
+    *(_DWORD *)sys_timezone = 0;
+    *(_DWORD *)sys_timenextzone = 0;
+    timestr = websGetVar(wp, "timeZone", byte_4E7E10);
+    if ( *timestr && timestr != (char *)-1
+      && sscanf(timestr + 1, "%[^:]:%s", timespand, timespand[1]) == 2 )  // ← OVERFLOW: unbounded into 4-byte buffers
+    {
+        // ...
+        strcpy(sys_timenextzone, timespand[1]);  // ← OVERFLOW: copies untrusted data into 4-byte buffer
+        SetValue("sys.timezone", sys_timezone);
+        SetValue("sys.timenextzone", sys_timenextzone);
+    }
+}
+```
+
+The `sscanf` format `"%[^:]:%s"` has no width limits. A `timeZone` value like `"+12:" + "A" * 100` causes `%s` to write 100 bytes into `timespand[1]` (only 4 bytes), then `strcpy` further overflows `sys_timenextzone` (also 4 bytes).
+
+
+
